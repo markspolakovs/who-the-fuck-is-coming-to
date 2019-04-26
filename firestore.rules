@@ -1,0 +1,37 @@
+service cloud.firestore {
+  match /databases/{database}/documents {
+  	function owns(doc) {
+    	return request.auth.uid == doc.owner.uid
+    }
+  
+    match /events/{evId} {
+    	allow list: if true;
+      allow read: if true;
+      
+    	allow create: if true;
+      allow delete: if false;
+      allow update: if owns(request.resource.data);
+      
+      function evtData() {
+      	return get(/databases/$(database)/documents/events/$(evId)).data;
+      }
+      
+      match /responses/{uid} {
+      	allow list: if evtData().options.private == false || owns(evtData());
+        allow read: 
+        	if evtData().options.private == false
+          || request.auth.uid == uid
+          || owns(evtData());
+        
+        allow create:
+        	if true;
+        allow update:
+        	if request.auth.uid == uid
+          || owns(evtData());
+        allow delete:
+        	if request.auth.uid == uid
+          || owns(evtData());
+      }
+    }
+  }
+}
