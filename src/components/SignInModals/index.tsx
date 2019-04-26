@@ -39,9 +39,16 @@ export interface ISignInModalState {
 interface ISignInModalProps {
   state: ISignInModalState;
   dispatch: (action: TAction) => any;
+  onError?: (error: firebaseui.auth.AuthUIError) => Promise<void>;
+  showIgnore?: boolean;
 }
 
-const SignInModals: React.FC<ISignInModalProps> = ({ state, dispatch }) => {
+const SignInModals: React.FC<ISignInModalProps> = ({
+  state,
+  dispatch,
+  onError,
+  showIgnore = true
+}) => {
   return (
     <>
       <Modal isOpen={state.signInPromptOpen !== null}>
@@ -55,12 +62,14 @@ const SignInModals: React.FC<ISignInModalProps> = ({ state, dispatch }) => {
               >
                 Cancel
               </Button>
-              <Button
-                color="danger"
-                onClick={() => dispatch({ type: "ignoreSignInWarning" })}
-              >
-                Ignore
-              </Button>
+              {showIgnore && (
+                <Button
+                  color="danger"
+                  onClick={() => dispatch({ type: "ignoreSignInWarning" })}
+                >
+                  Ignore
+                </Button>
+              )}
               <Button
                 color="primary"
                 onClick={() => dispatch({ type: "signIn" })}
@@ -86,13 +95,23 @@ const SignInModals: React.FC<ISignInModalProps> = ({ state, dispatch }) => {
               signInOptions: SIGN_IN_PROVIDERS,
               callbacks: {
                 // Avoid redirects after sign-in.
-                signInSuccessWithAuthResult: () => {
+                signInSuccessWithAuthResult: (rez) => {
+                  console.log("SUCC", rez);
                   dispatch({ type: "signInSuccessful" });
                   return false;
+                },
+                signInFailure: err => {
+                  console.warn("FAIL", err);
+                  if (onError) {
+                    return onError(err).then(() => {
+                      dispatch({ type: "signInSuccessful" });
+                    });
+                  }
+                  return Promise.resolve();
                 }
               },
               signInFlow: "popup",
-              autoUpgradeAnonymousUsers: true
+              autoUpgradeAnonymousUsers: !!onError
             }}
             firebaseAuth={firebase.auth()}
           />

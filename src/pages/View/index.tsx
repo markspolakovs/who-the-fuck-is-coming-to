@@ -89,13 +89,15 @@ const Attendees: React.FC<{ event: IEvent; id: string }> = ({ event, id }) => {
             )}
             <span className="attendee">{att.name}</span>
             {att.note && <p>{att.note}</p>}
-            <Button
-              style={{ float: "right" }}
-              color="link"
-              onClick={() => setPromptDelet(att)}
-            >
-              Delete
-            </Button>
+            {auth.user && auth.user.uid === event.owner.uid && (
+              <Button
+                style={{ float: "right" }}
+                color="link"
+                onClick={() => setPromptDelet(att)}
+              >
+                Delete
+              </Button>
+            )}
           </CardBody>
         </Card>
       ))}
@@ -127,7 +129,6 @@ interface IRFState extends ISignInModalState {
   nameTouched: boolean;
   coming: boolean;
   note: string;
-  saveAnonymously: boolean;
   saving: boolean;
   savedSuccessfully: boolean;
   saveError: any | null;
@@ -142,7 +143,6 @@ const initialRFState: IRFState = {
   note: "",
   signInPromptOpen: null,
   signInModalOpen: false,
-  saveAnonymously: false,
   saving: false,
   savedSuccessfully: false,
   saveError: null,
@@ -206,8 +206,7 @@ function rfReducer(state: IRFState, action: RFAction): IRFState {
     case "ignoreSignInWarning":
       return {
         ...state,
-        signInPromptOpen: null,
-        saveAnonymously: true
+        signInPromptOpen: null
       };
     case "goToHellYouStupidModal":
       return { ...state, signInPromptOpen: null };
@@ -303,12 +302,7 @@ const ResponseForm: React.FC<{ event: IEvent; id: string }> = ({
       let user = auth.user;
       console.log("User:", user);
       if (typeof user === "undefined" || user === null) {
-        if (state.saveAnonymously) {
-          user = (await firebase.auth().signInAnonymously()).user!;
-        } else {
-          dispatch({ type: "requestSignIn" });
-          return;
-        }
+        user = (await firebase.auth().signInAnonymously()).user!;
       }
 
       const payload: IEventAttendee = {
@@ -327,6 +321,9 @@ const ResponseForm: React.FC<{ event: IEvent; id: string }> = ({
         .doc(user.uid)
         .set(payload);
       dispatch({ type: "savedSuccessfully" });
+      if (user.isAnonymous) {
+        dispatch({ type: "requestSignIn" });
+      }
       window.setTimeout(() => {
         dispatch({ type: "reset" });
       }, 800);
@@ -334,12 +331,6 @@ const ResponseForm: React.FC<{ event: IEvent; id: string }> = ({
       dispatch({ type: "saveError", err: e });
     }
   }
-
-  useEffect(() => {
-    if (state.saveAnonymously) {
-      save();
-    }
-  }, [state.saveAnonymously]);
 
   async function delet() {
     const user = auth.user;
@@ -355,6 +346,37 @@ const ResponseForm: React.FC<{ event: IEvent; id: string }> = ({
       .delete();
     dispatch({ type: "closeDelet" });
     dispatch({ type: "resetAll" });
+  }
+
+  async function onSignInError(err: firebaseui.auth.AuthUIError) {
+    if (err.code != "firebaseui/anonymous-upgrade-merge-conflict") {
+      return;
+    }
+    if (!auth.user) {
+      return;
+    }
+    const user = auth.user;
+    // Copy the response data from the current user,
+    // delete it,
+    // sign in with the new user
+    // and save under the new UID
+    const dataRef = firebase
+      .firestore()
+      .collection("events")
+      .doc(id)
+      .collection("responses")
+      .doc(user.uid);
+    const dataSnap = await dataRef.get();
+    const data = dataSnap.data()!;
+    await dataRef.delete();
+    const newUser = await firebase.auth().signInWithCredential(err.credential);
+    await firebase
+      .firestore()
+      .collection("events")
+      .doc(id)
+      .collection("responses")
+      .doc(newUser.uid)
+      .set(data);
   }
 
   return (
@@ -432,7 +454,12 @@ const ResponseForm: React.FC<{ event: IEvent; id: string }> = ({
         </ModalFooter>
       </Modal>
 
-      <SignInModals state={state} dispatch={dispatch} />
+      <SignInModals
+        state={state}
+        dispatch={dispatch}
+        onError={onSignInError}
+        showIgnore={false}
+      />
     </div>
   );
 };
@@ -448,6 +475,12 @@ export const ViewPage: React.FC<IProps> = ({ match, location }) => {
       .collection("events")
       .doc(id)
   );
+
+  useEffect(() => {
+    if (event) {
+      document.title = `Who the fuck is coming to ${event.name}?`;
+    }
+  }, [event]);
 
   if (error) {
     console.error(error);
@@ -475,6 +508,7 @@ export const ViewPage: React.FC<IProps> = ({ match, location }) => {
           using this link:
           <div>
             <input
+              readOnly
               style={{ width: "100%" }}
               type="text"
               value={`https://whothefuckiscomingto.markspolakovs.me/${id}`}
@@ -496,10 +530,6 @@ export const ViewPage: React.FC<IProps> = ({ match, location }) => {
       )}
 
       <Link to="/">Create your own page like this!</Link>
-
-      <Helmet>
-        <title>Who the fuck is coming to {event.name}?</title>
-      </Helmet>
     </Container>
   );
 };
